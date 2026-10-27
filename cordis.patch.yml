@@ -1,0 +1,14 @@
+# DeepSeek Harness bundle patch for dsh-system-notify.
+#
+# Install from the DSH Plugins page, or from a shell:
+#   dsh plugin --profile <profile> add /absolute/path/to/dsh-system-notify
+#   dsh plugin --profile <profile> add github:JamesYasR/dsh-system-notify
+#
+# The plugin stores its configuration in:
+#   Windows: %APPDATA%\dsh-system-notify\config.json
+#   Linux:   $XDG_CONFIG_HOME/dsh-system-notify/config.json (default ~/.config/...)
+#
+# Every option is also editable in Settings -> 系统通知 / System Notifications.
+- insert:
+    - id: dsh-system-notify
+      name: 'dsh-system-notify'

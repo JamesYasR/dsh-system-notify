@@ -1,0 +1,71 @@
+{
+  "name": "dsh-system-notify",
+  "version": "1.0.0",
+  "description": "Codex-style desktop notifications for DeepSeek Harness: task finished, errors, questions and goals, with configurable events, sound, notification style, privacy level and click-to-focus. Windows and Ubuntu.",
+  "type": "module",
+  "license": "MIT",
+  "author": "JamesYasR",
+  "main": "./index.mjs",
+  "exports": {
+    ".": "./index.mjs",
+    "./client": "./client/client.js",
+    "./package.json": "./package.json",
+    "./locale/*.json": "./locale/*.json",
+    "./icon": "./icon.svg"
+  },
+  "files": [
+    "index.mjs",
+    "lib",
+    "client",
+    "locale",
+    "cordis.patch.yml",
+    "icon.svg",
+    "icon.png",
+    "README.md",
+    "README.zh-CN.md",
+    "CHANGELOG.md",
+    "SECURITY.md",
+    "LICENSE"
+  ],
+  "keywords": [
+    "deepseek",
+    "deepseek-harness",
+    "dsh",
+    "dsh-plugin",
+    "dsh-client-plugin",
+    "notifications",
+    "desktop-notifications",
+    "windows",
+    "ubuntu",
+    "codex"
+  ],
+  "engines": {
+    "node": ">=20"
+  },
+  "dsh": {
+    "manifestVersion": 1,
+    "bundle": {
+      "patch": "./cordis.patch.yml"
+    },
+    "client": {
+      "platform": "web"
+    },
+    "compatibility": {
+      "dsh": ">=0.2.0-rc.2 <0.3.0-0"
+    }
+  },
+  "scripts": {
+    "test": "node --test",
+    "verify": "node --check index.mjs && node --check client/client.js && node --check lib/config.mjs && node --check lib/events.mjs && node --check lib/format.mjs && node --check lib/notify.mjs && node --check lib/platform.mjs && node --check lib/routes.mjs && node --check lib/tool.mjs",
+    "sounds": "python tools/generate-sounds.py",
+    "icon": "python tools/generate-icon.py"
+  },
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/JamesYasR/dsh-system-notify.git"
+  },
+  "homepage": "https://github.com/JamesYasR/dsh-system-notify#readme",
+  "bugs": {
+    "url": "https://github.com/JamesYasR/dsh-system-notify/issues"
+  }
+}
