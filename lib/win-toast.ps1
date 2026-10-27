@@ -23,6 +23,29 @@ try {
 }
 
 $failed = $null
+$fallbackId = '{1AC14E77-02E7-4E5D-B744-2EB1AE5198B7}\WindowsPowerShell\v1.0\powershell.exe'
+
+if ($payload.dismissOnly) {
+  try {
+    [Windows.UI.Notifications.ToastNotificationManager, Windows.UI.Notifications, ContentType = WindowsRuntime] | Out-Null
+    $appId = [string]$payload.appId
+    if (-not $appId) { $appId = 'com.deepseek.dsh' }
+    if ($payload.tag) {
+      foreach ($id in @($appId, 'com.deepseek.dsh', 'DeepSeekHarness.Notify', $fallbackId)) {
+        if (-not $id) { continue }
+        try {
+          [Windows.UI.Notifications.ToastNotificationManager]::History.Remove([string]$payload.tag, [string]$payload.group, $id)
+        } catch {
+          # the toast may live under another registered source
+        }
+      }
+    }
+    exit 0
+  } catch {
+    [Console]::Error.WriteLine($_.Exception.Message)
+    exit 1
+  }
+}
 
 if ($payload.toast) {
   try {
@@ -51,9 +74,23 @@ if ($payload.toast) {
 
     $activation = ''
     $actionsXml = ''
+    $actionNodes = ''
+    if ($payload.actions) {
+      foreach ($action in @($payload.actions)) {
+        if ($null -eq $action) { continue }
+        $label = [string]$action.label
+        $arguments = [string]$action.arguments
+        if (-not $label -or -not $arguments) { continue }
+        $actionNodes += '<action content="' + (Escape-Xml $label) + '" activationType="protocol" arguments="' + (Escape-Xml $arguments) + '" />'
+      }
+    }
+    if ($actionNodes) {
+      $actionsXml = '<actions>' + $actionNodes + '</actions>'
+    } elseif ($payload.clickEnabled -and $payload.clickUrl) {
+      $actionsXml = '<actions><action content="' + (Escape-Xml ([string]$payload.actionLabel)) + '" activationType="protocol" arguments="' + (Escape-Xml ([string]$payload.clickUrl)) + '" /></actions>'
+    }
     if ($payload.clickEnabled -and $payload.clickUrl) {
       $activation = ' activationType="protocol" launch="' + (Escape-Xml ([string]$payload.clickUrl)) + '"'
-      $actionsXml = '<actions><action content="' + (Escape-Xml ([string]$payload.actionLabel)) + '" activationType="protocol" arguments="' + (Escape-Xml ([string]$payload.clickUrl)) + '" /></actions>'
     }
 
     $duration = 'short'
@@ -66,12 +103,13 @@ if ($payload.toast) {
     $xml = New-Object Windows.Data.Xml.Dom.XmlDocument
     $xml.LoadXml($xmlText)
     $toast = New-Object Windows.UI.Notifications.ToastNotification $xml
+    if ($payload.tag) { $toast.Tag = [string]$payload.tag }
+    if ($payload.group) { $toast.Group = [string]$payload.group }
 
     $appId = [string]$payload.appId
     if (-not $appId) {
       $appId = 'com.deepseek.dsh'
     }
-    $fallbackId = '{1AC14E77-02E7-4E5D-B744-2EB1AE5198B7}\WindowsPowerShell\v1.0\powershell.exe'
     $shown = $false
     $lastError = $null
     foreach ($id in @($appId, 'com.deepseek.dsh', 'DeepSeekHarness.Notify', $fallbackId)) {

@@ -2,6 +2,27 @@
 
 All notable changes to this project are documented here.
 
+## 1.1.0 — 2026-10-27
+
+Interactive notifications and custom sound files.
+
+- **Approve / reject from the notification**: approval requests now carry
+  `Approve` / `Reject` buttons; the outcome is returned to DSH directly.
+- **Answer questions from the notification**: single-choice options become
+  buttons; overflow and multi-select questions open a picker dialog; `Other…`
+  opens a text input. Unsupported shapes fall back to the Chat UI.
+- **20 s interaction window** (configurable 5–300 s); timeout or `Open DSH`
+  delegates back to the normal Chat prompt.
+- Windows uses a per-user `dsh-system-notify://` protocol handler
+  (`lib/responder.ps1`) to post actions to a loopback `/respond` route; Linux
+  uses freedesktop `ActionInvoked` + zenity dialogs.
+- Per-event **custom sound files** with upload from the settings page
+  (WAV on Windows; WAV/OGG on Ubuntu), stored under the plugin config
+  directory; legacy `sound.customPath` is still honoured.
+- New settings: interactive toggle/timeout, per-event custom sound paths and
+  upload buttons.
+- 64 unit tests.
+
 ## 1.0.0 — 2026-10-27
 
 Initial public release.

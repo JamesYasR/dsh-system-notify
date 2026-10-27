@@ -22,6 +22,9 @@ test('defaults are complete and valid', () => {
   assert.equal(config.click.enabled, true)
   assert.equal(config.click.url, 'dsh://open')
   assert.equal(config.windows.appId, 'com.deepseek.dsh')
+  assert.equal(config.interactive.enabled, true)
+  assert.equal(config.interactive.timeoutSec, 20)
+  assert.equal(config.sound.customNormalPath, '')
   assert.equal(Object.keys(config.events).length, 11)
   assert.deepEqual(Object.keys(config.include).sort(), [
     'duration',

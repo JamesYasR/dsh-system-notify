@@ -10,8 +10,11 @@ import { normalizeConfig } from '../lib/config.mjs'
 import { renderNotification } from '../lib/format.mjs'
 import { resolveIconPath } from '../lib/platform.mjs'
 import {
+  buildLinuxActionPairs,
+  buildLinuxInteractive,
   buildLinuxNotification,
   buildLinuxSoundCommand,
+  buildWindowsActionUrl,
   buildWindowsPayload,
   buildWindowsSoundPayload,
   createNotifier,
@@ -193,6 +196,125 @@ test('invalid custom icons fall back to the bundled PNG', () => {
   } finally {
     fs.rmSync(directory, { recursive: true, force: true })
   }
+})
+
+test('interactive action URLs carry the interaction token and base origin', () => {
+  const url = buildWindowsActionUrl('http://127.0.0.1:51625', 'interaction-1', 'secret-token', 'allow')
+  const parsed = new URL(url)
+  assert.equal(parsed.protocol, 'dsh-system-notify:')
+  assert.equal(parsed.searchParams.get('base'), 'http://127.0.0.1:51625')
+  assert.equal(parsed.searchParams.get('id'), 'interaction-1')
+  assert.equal(parsed.searchParams.get('token'), 'secret-token')
+  assert.equal(parsed.searchParams.get('action'), 'allow')
+})
+
+test('Linux interactive action pairs keep open as the default action', () => {
+  const pairs = buildLinuxActionPairs([
+    { id: 'allow', label: 'Approve' },
+    { id: 'deny', label: 'Reject' },
+    { id: 'open', label: 'Open DSH' }
+  ])
+  assert.deepEqual(pairs, ['default', 'Open DSH', 'allow', 'Approve', 'deny', 'Reject'])
+})
+
+test('Windows interactive delivery builds protocol actions and a dismissible tag', async () => {
+  const { config, rendered } = fixture()
+  const calls = []
+  const spawnImpl = (command, args, options) => {
+    calls.push({ command, args, options })
+    const child = new EventEmitter()
+    child.stdout = new EventEmitter()
+    child.stderr = new EventEmitter()
+    setImmediate(() => child.emit('close', 0))
+    return child
+  }
+  const notifier = createNotifier({
+    platform: 'win32',
+    capabilities: winCapabilities(),
+    pkgDir,
+    env: {},
+    spawnImpl,
+    logger: () => {}
+  })
+  const result = await notifier.sendInteractive(rendered, config, {
+    interactionId: 'interaction-1',
+    token: 'secret-token',
+    baseUrl: 'http://127.0.0.1:51625',
+    actions: [
+      { id: 'allow', label: 'Approve' },
+      { id: 'deny', label: 'Reject' },
+      { id: 'open', label: 'Open DSH' }
+    ],
+    onAction: () => {}
+  })
+  assert.equal(result.ok, true)
+  assert.equal(result.handle.platform, 'win32')
+  assert.ok(result.handle.tag.length <= 16)
+  const payload = JSON.parse(calls[0].options.env.DSH_NOTIFY_PAYLOAD)
+  assert.equal(payload.actions.length, 3)
+  assert.ok(payload.actions.every((action) => action.arguments.startsWith('dsh-system-notify://respond?')))
+  assert.equal(payload.clickEnabled, true)
+  assert.ok(payload.clickUrl.startsWith('dsh-system-notify://respond?'))
+  notifier.dispose()
+})
+
+test('Linux interactive delivery arms action monitoring for the gdbus notification', async () => {
+  const { config, rendered } = fixture()
+  const calls = []
+  const spawnImpl = (command, args) => {
+    calls.push({ command, args })
+    const child = new EventEmitter()
+    child.stdout = new EventEmitter()
+    child.stderr = new EventEmitter()
+    setImmediate(() => {
+      if (command === '/usr/bin/gdbus') {
+        child.stdout.emit('data', '(uint32 55,)\n')
+        child.emit('close', 0)
+      }
+    })
+    return child
+  }
+  const notifier = createNotifier({
+    platform: 'linux',
+    capabilities: linuxCapabilities(),
+    pkgDir,
+    env: {},
+    spawnImpl,
+    logger: () => {}
+  })
+  const result = await notifier.sendInteractive(rendered, config, {
+    interactionId: 'i1',
+    token: 't',
+    actions: [
+      { id: 'allow', label: 'Approve' },
+      { id: 'deny', label: 'Reject' },
+      { id: 'open', label: 'Open DSH' }
+    ],
+    onAction: () => {}
+  })
+  assert.equal(result.ok, true)
+  assert.equal(result.handle.notificationId, 55)
+  assert.ok(calls.some((call) => call.command === '/usr/bin/dbus-monitor'))
+  const gdbusCall = calls.find((call) => call.command === '/usr/bin/gdbus')
+  assert.ok(gdbusCall.args.some((arg) => String(arg).includes('"default"')))
+  notifier.dispose()
+})
+
+test('interactive payload builder supports multi-question fallbacks', () => {
+  const { config, rendered } = fixture()
+  const plan = buildLinuxInteractive(
+    rendered,
+    config,
+    linuxCapabilities(),
+    [
+      { id: 'input', label: 'Other…' },
+      { id: 'open', label: 'Open DSH' }
+    ],
+    { timeoutMs: 25_000 }
+  )
+  assert.equal(plan.mode, 'gdbus')
+  assert.ok(plan.args.includes('25000'))
+  assert.ok(plan.args.some((arg) => String(arg).includes('"input"')))
 })
 
 test('Linux gdbus command carries actions when click is enabled', () => {

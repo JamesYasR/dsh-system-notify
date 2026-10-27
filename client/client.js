@@ -39,7 +39,13 @@ window.__ModuleLoader__.load({ id: "dsh-system-notify", factory: (require) => {
     normalSound: "普通事件音效",
     errorSound: "错误事件音效",
     customPath: "自定义音频文件",
-    customPathHint: "Windows 需 WAV；Ubuntu 支持 WAV/OGG。留空则使用内置音效。",
+    customPathHint: "支持 WAV（Windows/Ubuntu）与 OGG（Ubuntu），最大 5 MiB；上传后可先试听，再点保存。",
+    customNormalPath: "普通事件自定义音频",
+    customErrorPath: "错误事件自定义音频",
+    chooseFile: "选择文件",
+    uploading: "上传中…",
+    uploaded: "已上传",
+    uploadFailed: "上传失败",
     volume: "音量",
     volumeHint: "仅 Ubuntu（paplay / pw-play）生效。",
     delivery: "通知方式",
@@ -69,6 +75,13 @@ window.__ModuleLoader__.load({ id: "dsh-system-notify", factory: (require) => {
     clickTitle: "Ubuntu 窗口标题匹配",
     clickTitleHint: "Ubuntu 上先尝试用 wmctrl/xdotool 按该标题聚焦窗口，找不到再打开上面的链接。",
     clickFallback: "找不到窗口时改为打开链接",
+    interactive: "交互式通知",
+    interactiveHint: "审查请求可直接在通知上同意/拒绝；问题可直接选择选项或输入回答。不点击时超时会回到 DSH 界面处理。",
+    interactiveEnabled: "允许在通知上直接操作",
+    interactiveTimeout: "等待操作时间（秒）",
+    interactiveTimeoutHint: "超时或选择“打开 DSH”后由 DSH 界面接手。",
+    interactiveUnavailable: "当前环境不支持交互式通知，将自动回落为普通通知。",
+    interactiveProtocol: "Windows 动作用协议",
     agentTool: "允许 Agent 主动发送通知",
     agentToolHint: "注册工具 send_desktop_notification，Agent 可随时提醒你。",
     advanced: "高级",
@@ -160,7 +173,13 @@ window.__ModuleLoader__.load({ id: "dsh-system-notify", factory: (require) => {
     normalSound: "Normal event sound",
     errorSound: "Error event sound",
     customPath: "Custom audio file",
-    customPathHint: "WAV on Windows; WAV/OGG on Ubuntu. Empty uses bundled sounds.",
+    customPathHint: "WAV (Windows/Ubuntu) or OGG (Ubuntu), up to 5 MiB. Upload, preview, then Save.",
+    customNormalPath: "Custom sound for normal events",
+    customErrorPath: "Custom sound for error events",
+    chooseFile: "Choose file",
+    uploading: "Uploading…",
+    uploaded: "Uploaded",
+    uploadFailed: "Upload failed",
     volume: "Volume",
     volumeHint: "Ubuntu only (paplay / pw-play).",
     delivery: "Delivery",
@@ -190,6 +209,13 @@ window.__ModuleLoader__.load({ id: "dsh-system-notify", factory: (require) => {
     clickTitle: "Ubuntu window title match",
     clickTitleHint: "On Ubuntu, try focusing a window with this title through wmctrl/xdotool before opening the link.",
     clickFallback: "Open the link when no window is found",
+    interactive: "Interactive notifications",
+    interactiveHint: "Approve or reject reviews directly on the toast, and answer questions by choosing an option or typing a reply. If you do nothing, the Chat UI takes over after the timeout.",
+    interactiveEnabled: "Allow actions directly on the notification",
+    interactiveTimeout: "Wait for an action (seconds)",
+    interactiveTimeoutHint: "After the timeout or “Open DSH”, the Chat UI prompt takes over.",
+    interactiveUnavailable: "Interactive notifications are unavailable here; the plugin falls back to a normal notification.",
+    interactiveProtocol: "Windows action protocol",
     agentTool: "Allow the Agent to send notifications",
     agentToolHint: "Registers the send_desktop_notification tool so the model can ping you explicitly.",
     advanced: "Advanced",
@@ -337,6 +363,15 @@ window.__ModuleLoader__.load({ id: "dsh-system-notify", factory: (require) => {
     return JSON.parse(JSON.stringify(value));
   }
 
+  function hydrateConfig(config) {
+    var next = clone(config);
+    if (next && next.sound && next.sound.customPath) {
+      if (!next.sound.customNormalPath) next.sound.customNormalPath = next.sound.customPath;
+      if (!next.sound.customErrorPath) next.sound.customErrorPath = next.sound.customPath;
+    }
+    return next;
+  }
+
   function setPath(object, path, value) {
     var keys = path.split(".");
     var next = clone(object);
@@ -427,12 +462,81 @@ window.__ModuleLoader__.load({ id: "dsh-system-notify", factory: (require) => {
         .then(function (body) {
           if (!body || body.ok !== true) throw new Error((body && body.error) || "load failed");
           setSnap(body);
-          setForm(clone(body.config));
+          setForm(hydrateConfig(body.config));
         })
         .catch(function (error) { setStatus(tr("loadError") + " " + String(error && error.message ? error.message : error)); });
     }, []);
 
     function update(path, value) { setForm(function (prev) { return setPath(prev, path, value); }); }
+
+    function chooseSound(kind) {
+      var input = document.getElementById("dsh-notify-sound-" + kind);
+      if (input) input.click();
+    }
+
+    function uploadSound(kind, file) {
+      if (!file) return;
+      if (file.size > 5 * 1024 * 1024) {
+        setStatus(tr("uploadFailed") + ": max 5 MiB");
+        return;
+      }
+      setBusy(true);
+      setStatus(tr("uploading"));
+      var reader = new FileReader();
+      reader.onload = function () {
+        var base64 = String(reader.result || "").split(",")[1] || "";
+        fetch("/dsh-system-notify/sound", {
+          method: "POST",
+          headers: { "content-type": "application/json" },
+          body: JSON.stringify({ kind: kind, name: file.name, data: base64 })
+        })
+          .then(function (r) { return r.json().then(function (body) { return { ok: r.ok, body: body }; }); })
+          .then(function (result) {
+            if (result.ok && result.body.ok) {
+              var pathKey = kind === "error" ? "sound.customErrorPath" : "sound.customNormalPath";
+              update(pathKey, result.body.path);
+              setStatus(tr("uploaded") + ": " + result.body.path);
+            } else {
+              setStatus(tr("uploadFailed") + ": " + ((result.body && result.body.error) || "unknown"));
+            }
+          })
+          .catch(function (error) { setStatus(tr("uploadFailed") + ": " + String(error)); })
+          .finally(function () { setBusy(false); });
+      };
+      reader.onerror = function () { setBusy(false); setStatus(tr("uploadFailed") + ": read error"); };
+      reader.readAsDataURL(file);
+    }
+
+    function soundFileRow(kind, label, value) {
+      var inputId = "dsh-notify-sound-" + kind;
+      return h("div", null,
+        h(Row, { label: label, hint: tr("customPathHint"), wide: true },
+          h("div", { style: { display: "flex", alignItems: "center", gap: "8px", width: "100%" } },
+            h(TextField, {
+              wide: true,
+              value: value,
+              placeholder: kind === "error" ? "C:\\sounds\\error.wav" : "C:\\sounds\\done.wav",
+              onChange: function (next) {
+                update(kind === "error" ? "sound.customErrorPath" : "sound.customNormalPath", next);
+              }
+            }),
+            h("button", {
+              style: Object.assign({}, S.btn, S.btnGhost),
+              disabled: busy,
+              onClick: function () { chooseSound(kind); }
+            }, tr("chooseFile")))),
+        h("input", {
+          id: inputId,
+          type: "file",
+          accept: ".wav,.ogg,audio/wav,audio/ogg",
+          style: { display: "none" },
+          onChange: function (event) {
+            var file = event.target.files && event.target.files[0];
+            if (file) uploadSound(kind, file);
+            event.target.value = "";
+          }
+        }));
+    }
 
     function load() {
       fetch("/dsh-system-notify/config")
@@ -440,7 +544,7 @@ window.__ModuleLoader__.load({ id: "dsh-system-notify", factory: (require) => {
         .then(function (body) {
           if (!body || body.ok !== true) throw new Error((body && body.error) || "load failed");
           setSnap(body);
-          setForm(clone(body.config));
+          setForm(hydrateConfig(body.config));
           setStatus("");
         })
         .catch(function (error) { setStatus(tr("loadError") + " " + String(error && error.message ? error.message : error)); });
@@ -576,9 +680,11 @@ window.__ModuleLoader__.load({ id: "dsh-system-notify", factory: (require) => {
             h(Select, { value: form.sound.normal, options: soundOptions, onChange: function (value) { update("sound.normal", value); } })),
           h(Row, { label: tr("errorSound") },
             h(Select, { value: form.sound.error, options: soundOptions, onChange: function (value) { update("sound.error", value); } }))),
-        form.sound.normal === "custom" || form.sound.error === "custom"
-          ? h(Row, { label: tr("customPath"), hint: tr("customPathHint"), wide: true },
-              h(TextField, { wide: true, value: form.sound.customPath, placeholder: "C:\\sounds\\done.wav", onChange: function (value) { update("sound.customPath", value); } }))
+        form.sound.normal === "custom"
+          ? soundFileRow("normal", tr("customNormalPath"), form.sound.customNormalPath)
+          : null,
+        form.sound.error === "custom"
+          ? soundFileRow("error", tr("customErrorPath"), form.sound.customErrorPath)
           : null,
         h(Row, { label: tr("volume"), hint: tr("volumeHint") },
           h("div", { style: { display: "flex", alignItems: "center", gap: 8 } },
@@ -647,6 +753,28 @@ window.__ModuleLoader__.load({ id: "dsh-system-notify", factory: (require) => {
             checked: form.click.openFallback === true,
             onChange: function (value) { update("click.openFallback", value); }
           })) : null),
+
+      h(Section, { title: tr("interactive"), hint: tr("interactiveHint") },
+        h(Check, {
+          label: tr("interactiveEnabled"),
+          checked: form.interactive && form.interactive.enabled === true,
+          onChange: function (value) { update("interactive.enabled", value); }
+        }),
+        form.interactive && form.interactive.enabled
+          ? h(Row, { label: tr("interactiveTimeout"), hint: tr("interactiveTimeoutHint") },
+              h(NumberField, {
+                value: form.interactive.timeoutSec,
+                min: 5,
+                max: 300,
+                onChange: function (value) { update("interactive.timeoutSec", value); }
+              }))
+          : null,
+        snap.interactive && snap.interactive.available
+          ? null
+          : h("div", { style: S.hint }, tr("interactiveUnavailable")),
+        snap.platform === "win32"
+          ? h("div", { style: S.hint }, tr("interactiveProtocol") + ": " + (snap.interactive && snap.interactive.protocolReady ? "✓" : "✗"))
+          : null),
 
       h(Section, { title: tr("advanced"), hint: "" },
         h("div", { style: S.grid },

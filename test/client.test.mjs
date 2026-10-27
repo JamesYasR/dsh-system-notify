@@ -107,7 +107,15 @@ test('client settings page renders its loading state without throwing', () => {
 })
 
 test('client settings page renders the loaded configuration form', () => {
-  const config = normalizeConfig({})
+  const config = normalizeConfig({
+    sound: {
+      normal: 'custom',
+      error: 'custom',
+      customNormalPath: 'C:\\sounds\\done.wav',
+      customErrorPath: 'C:\\sounds\\error.wav'
+    },
+    interactive: { enabled: true, timeoutSec: 25 }
+  })
   const snapshot = {
     config,
     defaults: normalizeConfig({}),
@@ -137,5 +145,8 @@ test('client settings page renders the loaded configuration form', () => {
   const tree = component()
   assert.ok(tree, 'the loaded settings form must render without throwing')
   assert.equal(tree.type, 'div')
-  assert.ok(JSON.stringify(tree).includes('系统通知'))
+  const serialized = JSON.stringify(tree)
+  assert.ok(serialized.includes('系统通知'))
+  assert.ok(serialized.includes('普通事件自定义音频'))
+  assert.ok(serialized.includes('C:\\\\sounds\\\\done.wav'))
 })

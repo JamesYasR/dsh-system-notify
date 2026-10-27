@@ -33,6 +33,9 @@ Everything is local. No network calls, no telemetry, no data leaves the machine.
 
 - **11 notification events** — turn complete/error/blocked/max-tokens/aborted, input needed, approval needed, goal complete/blocked, subagent finished, workflow finished.
 - **Four styles** — privacy (event only), simple, standard, detailed.
+- **Interactive approvals** — approve or reject a tool call directly on the toast; the outcome is returned to DSH.
+- **Interactive questions** — choose a listed option from the toast, pick from a checklist for multi-select, or type a custom answer in an input dialog.
+- **Custom sounds per event** — upload a WAV/OGG from the settings page (stored beside the config); separate files for normal and error events, plus the two bundled sounds.
 - **Sound** — system sound, two bundled original chimes, or your own file; separate normal/error sounds; volume on Ubuntu.
 - **Delivery modes** — toast + sound, toast only, or sound only.
 - **Quiet hours** — suppress normal notifications overnight, optionally still notify on critical errors.
@@ -71,7 +74,8 @@ Errors are always delivered with `critical` urgency (Linux) and the error sound;
 - DSH Desktop. The plugin uses:
   - PowerShell 5.1 + WinRT toast APIs (built into Windows);
   - the DSH Desktop AUMID `com.deepseek.dsh` for the toast identity (when it is unavailable the helper falls back to other registered toast sources, ending at PowerShell);
-  - the `dsh://open` deep link (registered by DSH Desktop) for click-to-focus.
+  - the `dsh://open` deep link (registered by DSH Desktop) for click-to-focus;
+  - a per-user `dsh-system-notify://` action protocol registered automatically for interactive approve/answer buttons.
 - Custom notification sounds are played by the PowerShell helper through `System.Media.SoundPlayer`; they must be **PCM WAV**. The two bundled sounds are WAV.
 - Toast notifications respect Focus Assist / Do Not Disturb. If you see nothing, check that Windows notification permission for “DeepSeek Harness” is enabled.
 
@@ -87,6 +91,7 @@ sudo apt install libnotify-bin libglib2.0-bin pulseaudio-utils wmctrl
 - `libglib2.0-bin` provides `gdbus` and `dbus-monitor` — **required for clickable notifications**.
 - `pulseaudio-utils` provides `paplay` (PipeWire systems usually provide `pw-play`; both are supported).
 - `wmctrl` (or `xdotool`) is used to focus the DSH window on click. Without it, clicking falls back to opening the configured link.
+- `zenity` is used for interactive text input and multi-choice dialogs. Install it with `sudo apt install zenity`; without it those flows fall back to the Chat UI (direct option buttons still work).
 
 Clickable notifications use the standard `org.freedesktop.Notifications` DBus interface: `gdbus` raises the notification with a `default` action, and `dbus-monitor` listens for `ActionInvoked`.
 
@@ -140,7 +145,9 @@ Override the location with `DSH_SYSTEM_NOTIFY_CONFIG=/path/to/config.json`.
 | `sound.enabled` | `true` | Play sounds at all. |
 | `sound.normal` | `system` | Sound for normal events: `none` / `system` / `chime` / `alert` / `custom`. |
 | `sound.error` | `alert` | Sound for error events (same values). |
-| `sound.customPath` | `""` | Custom audio file. Windows: WAV. Ubuntu: WAV/OGG. |
+| `sound.customPath` | `""` | Legacy shared custom audio path (still honoured). |
+| `sound.customNormalPath` | `""` | Custom audio for normal events; also set `sound.normal: "custom"`. |
+| `sound.customErrorPath` | `""` | Custom audio for error events; also set `sound.error: "custom"`. |
 | `sound.volume` | `80` | 0–100, Ubuntu only (`paplay`/`pw-play`). |
 | `delivery` | `both` | `both` / `toast` / `sound`. |
 | `quietHours.enabled` | `false` | Enable the quiet window. |
@@ -159,6 +166,9 @@ Override the location with `DSH_SYSTEM_NOTIFY_CONFIG=/path/to/config.json`.
 | `click.url` | `dsh://open` | Deep link or URL opened on click. |
 | `click.focusWindowTitle` | `DeepSeek Harness` | Ubuntu window-title match for `wmctrl`/`xdotool`. |
 | `click.openFallback` | `true` | On Ubuntu, open the link when no window matches. |
+| `interactive.enabled` | `true` | Use action buttons / answer prompts on the notification. |
+| `interactive.timeoutSec` | `20` | How long the notification owns the prompt before the Chat UI takes over (5–300). |
+| `interactive.maxOptions` | `3` | Direct option buttons before the “Choose…” dialog is used (1–3). |
 | `appName` | `DeepSeek Harness` | App name shown by Linux notifications. |
 | `windows.appId` | `com.deepseek.dsh` | Windows toast AUMID; change only for a custom shell build. |
 | `iconPath` | `""` | Custom PNG icon; empty uses the bundled icon. |
@@ -183,6 +193,61 @@ Clickable notifications cannot be produced by plain `notify-send`, so the plugin
 
 If `gdbus` is missing, the plugin falls back to `notify-send`. If `dbus-monitor` is missing, `gdbus` still raises the notification but clicking it cannot be observed, so the toast is not clickable. If you use DSH in a browser on Ubuntu, set `click.focusWindowTitle` to something in the browser window title (e.g. `DeepSeek Harness`) and/or change `click.url` to the DSH URL. On Wayland, `wmctrl`/`xdotool` may be unavailable; the click then falls back to opening `click.url`.
 
+## Interactive notifications
+
+When `interactive.enabled` is on (default), approval and single-question requests can be answered directly from the toast. The plugin briefly owns the request, shows the action UI, and returns the choice to DSH. If you do nothing for `interactive.timeoutSec` (default 20 s), choose **Open DSH**, privacy style is active, the delivery mode is sound-only, or a platform helper is missing, the request is delegated to the normal Chat UI — the same prompt you would have seen anyway.
+
+| Request | On the notification |
+|---|---|
+| Tool approval | **Approve** / **Reject** / **Open DSH**; Approve returns `allowed-once`, Reject returns `rejected`. |
+| Single choice question | One button per option (up to 3), **Choose…** for overflow, **Other…** for free text, **Open DSH**. |
+| Multi-select question | **Choose…** opens a checklist, **Other…** opens text input, **Open DSH**. |
+| Question without options | **Other…** opens a text input, **Open DSH**. |
+| Multiple questions in one request | Falls back to the normal Chat UI. |
+
+### Windows mechanics
+
+The plugin registers a per-user protocol handler under
+`HKCU\Software\Classes\dsh-system-notify` (no admin rights). Each button is an
+`activationType="protocol"` action carrying a one-time interaction id + token and
+the local DSH origin; `lib/responder.ps1` posts the choice to the same-origin
+`/dsh-system-notify/respond` route. **Other…** opens a Windows input box;
+**Choose…** opens a WinForms list/checklist. The protocol is removed when the
+plugin is disabled or unloaded.
+
+### Ubuntu mechanics
+
+Clickable notifications use the freedesktop `ActionInvoked` signal (requires
+`gdbus` + `dbus-monitor`). **Other…** and **Choose…** open `zenity` dialogs.
+Direct option buttons work without zenity. Action visibility ultimately depends
+on the notification daemon; GNOME may show fewer buttons for many-option
+questions.
+
+### Security / behaviour
+
+- Action ids are random per interaction and validated against the live pending
+  set; a stale or forged action gets `410`.
+- Interactive mode never triggers when notification style is **Privacy**, since
+  option labels and question text are content.
+- In-flight prompts are dismissed on timeout/abort, and the normal Chat prompt
+  is opened instead.
+
+## Custom notification sounds
+
+The settings page has **Choose file** buttons next to the normal/error sound
+selectors. Uploaded files are validated by container magic and stored in:
+
+```text
+<config dir>/sounds/<kind>-<timestamp>-<random>.wav|ogg
+```
+
+- Maximum 5 MiB; WAV on Windows, WAV/OGG on Ubuntu.
+- Separate files for normal and error events; the legacy shared
+  `sound.customPath` still works as a fallback.
+- The file is stored locally; nothing is uploaded to the network. Remove old
+  files from that directory manually if you no longer need them.
+- **Preview sound** plays the current normal sound without saving.
+
 ## Event sources
 
 | Notification | DSH source |
@@ -201,7 +266,7 @@ Duplicate suppression: a question suppresses the immediately following `blocked`
 
 - Notification content stays in process memory (the Windows payload is passed to the PowerShell helper through an environment variable) and in the OS toast. The plugin itself writes only the config file; Windows Notification Center may retain shown toasts according to OS settings.
 - The config file is written with user-only permissions where the OS supports them (`0600`).
-- **Privacy style** removes session titles, summaries, paths, session ids and error text from the notification. The event category and sound remain.
+- **Privacy style** removes session titles, summaries, paths, session ids and error text from the notification. The event category and sound remain. Interactive prompts are disabled in privacy style because option labels and question text are content.
 - Click URLs are validated against an allowlist (`http:`, `https:`, `dsh:`); `file:`, `javascript:`, `ms-msdt:` and other schemes are rejected.
 - HTTP routes are same-origin only and reject a mismatched `Origin` header. Request bodies are capped at 256 KiB.
 
@@ -236,6 +301,20 @@ Duplicate suppression: a question suppresses the immediately following `blocked`
 - Ubuntu: install `wmctrl`/`xdotool` and `libglib2.0-bin`; confirm the window title contains `click.focusWindowTitle`.
 - Browser-only DSH: set `click.url` to the DSH web URL.
 
+### Interactive buttons do nothing
+
+- Confirm **Settings → System Notifications → Interactive notifications** is enabled and the event is checked.
+- Windows: the settings page shows the protocol status. If it is `✗`, run the plugin while your user can write `HKCU\Software\Classes` (no admin needed), then reload the plugin.
+- Ubuntu: install `libglib2.0-bin` (gdbus/dbus-monitor) and `zenity` for text/checklist dialogs.
+- Option buttons may be hidden by a notification daemon that limits actions; **Open DSH** still works.
+- After the timeout (default 20 s) DSH itself asks, so the agent is never left waiting.
+
+### Custom sound upload fails
+
+- WAV only on Windows; WAV/OGG on Ubuntu; maximum 5 MiB.
+- The file is verified by magic bytes, not by its extension.
+- If the config directory is read-only, the upload returns an error; check the path shown at the bottom of the settings page.
+
 ### Still stuck
 
 - Enable the plugin, then use **Send test notification** / **Preview sound** in Settings.
@@ -248,7 +327,7 @@ Duplicate suppression: a question suppresses the immediately following `blocked`
 ```bash
 git clone https://github.com/JamesYasR/dsh-system-notify.git
 cd dsh-system-notify
-node --test          # unit tests: config, formatting, policy, payload builders
+node --test          # unit tests: config, formatting, policy, interactive actions, payload builders, uploads
 npm run verify       # syntax-check every runtime module
 python tools/generate-sounds.py   # regenerate bundled WAVs
 python tools/generate-icon.py     # regenerate icon.png (Pillow)
@@ -268,11 +347,15 @@ lib/config.mjs         defaults, validation, persistence
 lib/events.mjs         session/goal/interaction event collection + policy
 lib/format.mjs         style/privacy/localization rendering
 lib/i18n.mjs           zh/en copy and duration formatting
+lib/interactive.mjs    approval/question prompts, pending actions, Linux dialogs
 lib/notify.mjs         Windows/macOS/Linux delivery + pure payload builders
 lib/platform.mjs       backend detection (PowerShell, notify-send, paplay, …)
-lib/routes.mjs         same-origin HTTP routes for the settings page
+lib/routes.mjs         same-origin HTTP routes for settings, actions and uploads
+lib/sound-upload.mjs   validated custom-sound storage
 lib/tool.mjs           optional send_desktop_notification tool
+lib/win-protocol.mjs   HKCU dsh-system-notify:// protocol registration
 lib/win-toast.ps1      WinRT toast + sound helper (Windows)
+lib/responder.ps1      Windows toast-action protocol handler
 client/client.js       Settings → System Notifications page
 test/                  Node built-in test runner suites
 tools/                 asset generators (sounds, icon)
@@ -282,10 +365,13 @@ The delivery builders are pure and unit-tested on every platform; the Linux path
 
 ## Limitations
 
+- Interactive approval always answers `allowed-once` or `rejected`; there is no “always allow” button.
+- Multiple questions in one request, or a notification daemon that hides actions, fall back to the Chat UI.
+- macOS interactive actions are not supported; macOS gets normal notifications only.
 - Windows notification volume is controlled by the system sound scheme; `sound.volume` applies to Ubuntu only.
-- Windows custom sounds must be WAV.
+- Windows custom sounds must be WAV; a successful upload is stored locally and referenced by absolute path.
 - Clicking focuses the DSH window, not a specific session: DSH’s deep link is `dsh://open`.
-- Linux click support depends on `gdbus`, `dbus-monitor`, and a notification daemon that implements the freedesktop spec.
+- Linux click/interactive support depends on `gdbus`, `dbus-monitor`, and a notification daemon that implements the freedesktop spec; zenity is needed for text/checklist dialogs.
 - The macOS path is best-effort and click support requires `terminal-notifier`.
 - Toast banners may be suppressed by OS focus modes; this is expected system behaviour, not a plugin failure.
 

@@ -21,16 +21,19 @@ import {
 import { renderNotification, sampleEvent } from './lib/format.mjs'
 import { resolveLanguage } from './lib/i18n.mjs'
 import { createEventCollector } from './lib/events.mjs'
+import { createInteractiveManager } from './lib/interactive.mjs'
 import { createNotifier } from './lib/notify.mjs'
 import { detectCapabilities, resolveIconPath } from './lib/platform.mjs'
 import { mountRoutes } from './lib/routes.mjs'
 import { buildAgentTool } from './lib/tool.mjs'
+import { ensureWindowsProtocol, removeWindowsProtocol } from './lib/win-protocol.mjs'
+import { saveSoundUpload } from './lib/sound-upload.mjs'
 
 export const name = 'dsh-system-notify'
 
 const PACKAGE_DIR = path.dirname(fileURLToPath(import.meta.url))
 const PLATFORM = process.platform
-const VERSION = '1.0.0'
+const VERSION = '1.1.0'
 
 function publicCapabilities(capabilities, iconAvailable) {
   const view = {
@@ -52,7 +55,8 @@ export function apply(ctx) {
     configPath: configFile,
     loadError: loaded.error,
     toolDispose: undefined,
-    toolsContext: undefined
+    toolsContext: undefined,
+    protocolReady: false
   }
 
   const logger = createLogger(ctx)
@@ -88,6 +92,39 @@ export function apply(ctx) {
 
   function currentConfig() {
     return state.config
+  }
+
+  function getOrigin() {
+    try {
+      const webServer = service('webServer')
+      if (webServer && typeof webServer.getOrigin === 'function') return webServer.getOrigin()
+    } catch {
+      // fall through
+    }
+    try {
+      const webApp = service('webApp')
+      if (webApp && typeof webApp.getAdvertisedUrl === 'function') return webApp.getAdvertisedUrl()
+    } catch {
+      // ignore
+    }
+    return undefined
+  }
+
+  function syncWindowsProtocol() {
+    if (PLATFORM !== 'win32') return
+    const wanted = state.config.interactive && state.config.interactive.enabled === true
+    if (wanted) {
+      const ok = ensureWindowsProtocol({
+        pkgDir: PACKAGE_DIR,
+        powershellPath: capabilities.commands.powershell,
+        iconPath: resolveIconPath(PACKAGE_DIR, state.config.iconPath)
+      })
+      state.protocolReady = ok
+      if (!ok) logger('could not register the dsh-system-notify:// action protocol')
+    } else if (state.protocolReady) {
+      removeWindowsProtocol()
+      state.protocolReady = false
+    }
   }
 
   function deliver(event) {
@@ -149,6 +186,19 @@ export function apply(ctx) {
     logger
   })
 
+  const interactive = createInteractiveManager({
+    getConfig: currentConfig,
+    notifier,
+    platform: PLATFORM,
+    getOrigin,
+    describeAgent: (agent) => collector.describeAgent(agent),
+    fallbackApproval: (request) => collector.handleApproval(request),
+    fallbackQuestion: (request) => collector.handleNeedsInput(request),
+    isWindowsProtocolReady: () => state.protocolReady,
+    logger
+  })
+  syncWindowsProtocol()
+
   ctx.on('session/event', (session, event) => collector.handleSessionEvent(session, event), {
     global: true
   })
@@ -158,6 +208,8 @@ export function apply(ctx) {
   ctx.on('goal/changed', (payload) => collector.handleGoalChanged(payload), { global: true })
   ctx.on('user-questions/request', (request, next) => {
     try {
+      const handled = interactive.handleQuestion(request, next)
+      if (handled) return handled
       collector.handleNeedsInput(request)
     } catch (error) {
       logger(`question notification failed: ${error instanceof Error ? error.message : error}`)
@@ -166,6 +218,8 @@ export function apply(ctx) {
   }, { global: true, prepend: true })
   ctx.on('approval/request', (request, next) => {
     try {
+      const handled = interactive.handleApproval(request, next)
+      if (handled) return handled
       collector.handleApproval(request)
     } catch (error) {
       logger(`approval notification failed: ${error instanceof Error ? error.message : error}`)
@@ -245,7 +299,11 @@ export function apply(ctx) {
       loadError: state.loadError,
       capabilities: publicCapabilities(capabilities, resolveIconPath(PACKAGE_DIR, config.iconPath)),
       styleSamples,
-      client: clientBundleStatus()
+      client: clientBundleStatus(),
+      interactive: {
+        available: interactive.canInteract(),
+        protocolReady: state.protocolReady
+      }
     }
   }
 
@@ -257,6 +315,7 @@ export function apply(ctx) {
     capabilities.iconPath = resolveIconPath(PACKAGE_DIR, saved.iconPath)
     capabilities.appName = saved.appName
     syncAgentTool()
+    syncWindowsProtocol()
     return saved
   }
 
@@ -292,6 +351,16 @@ export function apply(ctx) {
     }
   }
 
+  function saveSound(input) {
+    return saveSoundUpload({
+      kind: input && input.kind,
+      data: input && input.data,
+      name: input && input.name,
+      configPath: state.configPath,
+      platform: PLATFORM
+    })
+  }
+
   ctx.inject(['webServer'], (webContext) => {
     webContext.effect(
       () =>
@@ -299,15 +368,23 @@ export function apply(ctx) {
           webServer: webContext.webServer,
           getSnapshot: (configOverride) => snapshot(configOverride),
           saveConfig: save,
-          testNotification
+          testNotification,
+          saveSound,
+          resolveInteraction: (input) => interactive.resolve(input.id, input.token, input.action, input.value),
+          interactionMeta: (id, token) => interactive.meta(id, token)
         }),
       'dsh-system-notify: settings routes'
     )
   })
 
   ctx.effect(() => () => {
+    interactive.dispose()
     collector.dispose()
     notifier.dispose()
+    if (state.protocolReady) {
+      removeWindowsProtocol()
+      state.protocolReady = false
+    }
   }, 'dsh-system-notify: lifecycle')
 
   if (logger && state.config.enabled) {

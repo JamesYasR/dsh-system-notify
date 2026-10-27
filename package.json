@@ -1,7 +1,7 @@
 {
   "name": "dsh-system-notify",
-  "version": "1.0.0",
-  "description": "Codex-style desktop notifications for DeepSeek Harness: task finished, errors, questions and goals, with configurable events, sound, notification style, privacy level and click-to-focus. Windows and Ubuntu.",
+  "version": "1.1.0",
+  "description": "Codex-style desktop notifications for DeepSeek Harness: task finished, errors, questions and goals, with configurable events, custom sounds, notification style, privacy, interactive approve/answer buttons and click-to-focus. Windows and Ubuntu.",
   "type": "module",
   "license": "MIT",
   "author": "JamesYasR",
@@ -35,6 +35,8 @@
     "dsh-client-plugin",
     "notifications",
     "desktop-notifications",
+    "interactive-notifications",
+    "custom-sounds",
     "windows",
     "ubuntu",
     "codex"
@@ -56,7 +58,7 @@
   },
   "scripts": {
     "test": "node --test",
-    "verify": "node --check index.mjs && node --check client/client.js && node --check lib/config.mjs && node --check lib/events.mjs && node --check lib/format.mjs && node --check lib/notify.mjs && node --check lib/platform.mjs && node --check lib/routes.mjs && node --check lib/tool.mjs",
+    "verify": "node --check index.mjs && node --check client/client.js && node --check lib/config.mjs && node --check lib/events.mjs && node --check lib/format.mjs && node --check lib/interactive.mjs && node --check lib/notify.mjs && node --check lib/platform.mjs && node --check lib/routes.mjs && node --check lib/sound-upload.mjs && node --check lib/tool.mjs && node --check lib/win-protocol.mjs",
     "sounds": "python tools/generate-sounds.py",
     "icon": "python tools/generate-icon.py"
   },
