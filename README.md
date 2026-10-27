@@ -39,7 +39,7 @@ Everything is local. No network calls, no telemetry, no data leaves the machine.
 - **Rate control** — minimum task duration, per-event cooldown, optional subagent-session filtering.
 - **Click to focus** — on Windows the toast uses DSH Desktop's official `dsh://open` deep link; on Ubuntu it can focus a window via `wmctrl`/`xdotool`, then falls back to opening a link. The whole click action can be disabled.
 - **Agent tool (opt-in)** — `send_desktop_notification` lets the model send an explicit notification when you asked to be pinged.
-- **Bilingual UI** — Chinese/English settings page and notification text (auto-detected, or force a language).
+- **Bilingual UI** — Chinese/English settings page; notification text follows the system locale or can be forced to Chinese/English.
 - **Zero runtime dependencies** — Node built-ins and the OS notification stack.
 
 ## Notification styles
@@ -70,9 +70,9 @@ Errors are always delivered with `critical` urgency (Linux) and the error sound;
 - Windows 10 (1809+) or Windows 11.
 - DSH Desktop. The plugin uses:
   - PowerShell 5.1 + WinRT toast APIs (built into Windows);
-  - the DSH Desktop AUMID `DeepSeekHarness.Notify` for the toast identity;
+  - the DSH Desktop AUMID `com.deepseek.dsh` for the toast identity (when it is unavailable the helper falls back to other registered toast sources, ending at PowerShell);
   - the `dsh://open` deep link (registered by DSH Desktop) for click-to-focus.
-- Custom notification sounds must be **PCM WAV** (Windows toast audio restriction). The two bundled sounds are WAV.
+- Custom notification sounds are played by the PowerShell helper through `System.Media.SoundPlayer`; they must be **PCM WAV**. The two bundled sounds are WAV.
 - Toast notifications respect Focus Assist / Do Not Disturb. If you see nothing, check that Windows notification permission for “DeepSeek Harness” is enabled.
 
 ### Ubuntu
@@ -145,7 +145,7 @@ Override the location with `DSH_SYSTEM_NOTIFY_CONFIG=/path/to/config.json`.
 | `delivery` | `both` | `both` / `toast` / `sound`. |
 | `quietHours.enabled` | `false` | Enable the quiet window. |
 | `quietHours.start` / `end` | `22:00` / `08:00` | Local time; overnight windows supported. |
-| `quietHours.allowCritical` | `true` | Errors/goal-blocked still notify during quiet hours. |
+| `quietHours.allowCritical` | `true` | Critical events still notify during quiet hours: errors, goal-blocked, and blocking prompts (input/approval). |
 | `minDurationSec` | `0` | Only notify for successful turns at least this long. |
 | `cooldownSec` | `10` | Minimum gap between same-category notifications. Critical errors bypass it. |
 | `include.sessionTitle` | `true` | Show the session title. |
@@ -160,7 +160,7 @@ Override the location with `DSH_SYSTEM_NOTIFY_CONFIG=/path/to/config.json`.
 | `click.focusWindowTitle` | `DeepSeek Harness` | Ubuntu window-title match for `wmctrl`/`xdotool`. |
 | `click.openFallback` | `true` | On Ubuntu, open the link when no window matches. |
 | `appName` | `DeepSeek Harness` | App name shown by Linux notifications. |
-| `windows.appId` | `DeepSeekHarness.Notify` | Windows toast AUMID; change only for a custom shell build. |
+| `windows.appId` | `com.deepseek.dsh` | Windows toast AUMID; change only for a custom shell build. |
 | `iconPath` | `""` | Custom PNG icon; empty uses the bundled icon. |
 | `agentTool` | `false` | Register the `send_desktop_notification` tool. |
 
@@ -181,7 +181,7 @@ Clickable notifications cannot be produced by plain `notify-send`, so the plugin
 2. a short-lived `dbus-monitor` that watches `ActionInvoked` for that notification id;
 3. on click, `xdotool` / `wmctrl` focuses a window whose title matches `click.focusWindowTitle`, otherwise `xdg-open <click.url>` (if `click.openFallback`).
 
-If `gdbus` or `dbus-monitor` is missing, the plugin falls back to `notify-send` and the toast is not clickable. If you use DSH in a browser on Ubuntu, set `click.focusWindowTitle` to something in the browser window title (e.g. `DeepSeek Harness`) and/or change `click.url` to the DSH URL.
+If `gdbus` is missing, the plugin falls back to `notify-send`. If `dbus-monitor` is missing, `gdbus` still raises the notification but clicking it cannot be observed, so the toast is not clickable. If you use DSH in a browser on Ubuntu, set `click.focusWindowTitle` to something in the browser window title (e.g. `DeepSeek Harness`) and/or change `click.url` to the DSH URL. On Wayland, `wmctrl`/`xdotool` may be unavailable; the click then falls back to opening `click.url`.
 
 ## Event sources
 
@@ -199,10 +199,10 @@ Duplicate suppression: a question suppresses the immediately following `blocked`
 
 ## Privacy
 
-- Content exists only in the transient toast body and process memory. Nothing is written to disk except your config file.
+- Notification content stays in process memory (the Windows payload is passed to the PowerShell helper through an environment variable) and in the OS toast. The plugin itself writes only the config file; Windows Notification Center may retain shown toasts according to OS settings.
 - The config file is written with user-only permissions where the OS supports them (`0600`).
 - **Privacy style** removes session titles, summaries, paths, session ids and error text from the notification. The event category and sound remain.
-- Click URLs are validated: `http(s)://` and app protocols are accepted; `file:`, `javascript:`, `data:` and similar schemes are rejected.
+- Click URLs are validated against an allowlist (`http:`, `https:`, `dsh:`); `file:`, `javascript:`, `ms-msdt:` and other schemes are rejected.
 - HTTP routes are same-origin only and reject a mismatched `Origin` header. Request bodies are capped at 256 KiB.
 
 ## Troubleshooting
@@ -212,8 +212,7 @@ Duplicate suppression: a question suppresses the immediately following `blocked`
 1. Check Windows **Settings → System → Notifications** — “DeepSeek Harness” must be allowed.
 2. Check Focus Assist / Do Not Disturb. Toasts are queued in Notification Center rather than shown as banners in some modes.
 3. Make sure the plugin is enabled and the event is checked.
-4. The default toast AppID is `DeepSeekHarness.Notify`. It is created by DSH Desktop; if it is missing, set `windows.appId` to `com.deepseek.dsh` or to the PowerShell AUMID
-   `{1AC14E77-02E7-4E5D-B744-2EB1AE5198B7}\WindowsPowerShell\v1.0\powershell.exe`.
+4. The default toast AppID is `com.deepseek.dsh`, the AUMID registered by the DSH Desktop Start Menu shortcut. The helper falls back to other registered toast sources, ending at the always-registered PowerShell source. To pin another source, set `windows.appId` explicitly.
 
 ### No sound on Windows
 

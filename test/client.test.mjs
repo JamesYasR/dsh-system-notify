@@ -5,6 +5,8 @@ import test from 'node:test'
 import vm from 'node:vm'
 import { fileURLToPath } from 'node:url'
 
+import { normalizeConfig } from '../lib/config.mjs'
+
 const clientPath = path.resolve(
   path.dirname(fileURLToPath(import.meta.url)),
   '..',
@@ -12,13 +14,18 @@ const clientPath = path.resolve(
   'client.js'
 )
 
-function fakeReact() {
+function fakeReact(initialState = []) {
+  const queue = initialState.slice()
   return {
     createElement(type, props, ...children) {
-      return { type, props: props || {}, children }
+      const normalized = { ...(props || {}) }
+      if (typeof type === 'function') {
+        return type({ ...normalized, children: children.length === 1 ? children[0] : children })
+      }
+      return { type, props: normalized, children }
     },
     useState(initial) {
-      return [initial, () => {}]
+      return [queue.length > 0 ? queue.shift() : initial, () => {}]
     },
     useEffect() {},
     useMemo(factory) {
@@ -27,7 +34,7 @@ function fakeReact() {
   }
 }
 
-function loadClientModule() {
+function loadClientModule(react = fakeReact()) {
   const source = fs.readFileSync(clientPath, 'utf8')
   let definition
   const context = {
@@ -45,9 +52,24 @@ function loadClientModule() {
   vm.runInNewContext(source, context, { filename: 'client/client.js' })
   assert.ok(definition, 'client module must call window.__ModuleLoader__.load')
   assert.equal(definition.id, 'dsh-system-notify')
-  const react = fakeReact()
   const moduleExports = definition.factory(() => react)
   return { moduleExports, react }
+}
+
+function mountClient(moduleExports) {
+  let component
+  moduleExports.apply({
+    slots: {
+      inject(_slot, callback) {
+        return callback()
+      },
+      register(_meta, value) {
+        component = value
+        return () => {}
+      }
+    }
+  })
+  return component
 }
 
 test('client module registers one settings.section page', () => {
@@ -76,23 +98,44 @@ test('client module registers one settings.section page', () => {
 })
 
 test('client settings page renders its loading state without throwing', () => {
-  const { moduleExports, react } = loadClientModule()
-  let component
-  moduleExports.apply({
-    slots: {
-      inject(_slot, callback) {
-        return callback()
-      },
-      register(_meta, value) {
-        component = value
-        return () => {}
-      }
-    }
-  })
-
-  const element = component()
-  assert.equal(typeof element.type, 'function')
-  const tree = element.type({})
+  const { moduleExports } = loadClientModule()
+  const component = mountClient(moduleExports)
+  const tree = component()
   assert.ok(tree, 'App must return a render tree')
   assert.equal(tree.type, 'div')
+  assert.ok(JSON.stringify(tree).includes('加载中'))
+})
+
+test('client settings page renders the loaded configuration form', () => {
+  const config = normalizeConfig({})
+  const snapshot = {
+    config,
+    defaults: normalizeConfig({}),
+    version: '1.0.0',
+    platform: 'win32',
+    configPath: 'C:\\Users\\me\\AppData\\Roaming\\dsh-system-notify\\config.json',
+    loadError: undefined,
+    capabilities: {
+      platform: 'win32',
+      toast: { available: true, backend: 'windows-toast' },
+      sound: { available: true, backend: 'powershell-soundplayer' },
+      click: { available: true, backend: 'dsh-protocol' },
+      notes: ['click.requiresDshDesktop'],
+      iconAvailable: true
+    },
+    styleSamples: {
+      privacy: { title: '任务完成', lines: [] },
+      simple: { title: '任务完成', lines: ['示例会话'] },
+      standard: { title: '任务完成', lines: ['示例会话', '摘要'] },
+      detailed: { title: '任务完成 · 示例会话', lines: ['摘要', 'C:\\workspace\\demo'] }
+    },
+    client: { registered: true }
+  }
+  const react = fakeReact([snapshot, config, '', false])
+  const { moduleExports } = loadClientModule(react)
+  const component = mountClient(moduleExports)
+  const tree = component()
+  assert.ok(tree, 'the loaded settings form must render without throwing')
+  assert.equal(tree.type, 'div')
+  assert.ok(JSON.stringify(tree).includes('系统通知'))
 })

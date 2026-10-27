@@ -38,7 +38,7 @@ Codex 只在每轮结束时执行一个 hook；本插件是事件驱动的：
 - **频率控制**：最短任务时长、同类通知冷却、忽略子代理会话。
 - **点击唤起**：Windows 使用 DSH 桌面版官方 `dsh://open` 深链；Ubuntu 通过 `wmctrl`/`xdotool` 聚焦窗口，找不到再打开链接。整个点击行为可关闭。
 - **Agent 工具（可选）**：注册 `send_desktop_notification`，让 Agent 主动提醒你。
-- **中英双语**：设置页与通知文本自动跟随系统，也可强制语言。
+- **中英双语**：设置页跟随浏览器语言；通知文本可跟随系统或强制中文/English。
 - **零运行时依赖**：只用 Node 内置模块和操作系统通知能力。
 
 ## 通知风格示意
@@ -69,9 +69,9 @@ kind=turnComplete
 - Windows 10（1809+）或 Windows 11。
 - DSH 桌面版。插件使用：
   - PowerShell 5.1 + WinRT Toast（系统自带）；
-  - DSH 桌面版注册的 Toast AppID `DeepSeekHarness.Notify`；
+  - DSH 桌面版 Start Menu 快捷方式注册的 Toast AppID `com.deepseek.dsh`（不可用时助手会回退到其他已注册 Toast 源，最后回退到 Windows PowerShell）；
   - DSH 桌面版的 `dsh://open` 协议实现点击唤起窗口。
-- 自定义音效必须是本地 **PCM WAV**（Windows Toast 音频限制）；内置音效已是 WAV。
+- 自定义音效由 PowerShell 助手通过 `System.Media.SoundPlayer` 播放，必须是 **PCM WAV**；内置音效已是 WAV。
 - 通知受 Windows 专注助手 / 勿扰模式影响。若没有弹窗，请检查“DeepSeek Harness”的通知权限。
 
 ### Ubuntu
@@ -144,7 +144,7 @@ dsh plugin --profile desktop add /absolute/path/to/dsh-system-notify
 | `delivery` | `both` | `both` / `toast` / `sound`。 |
 | `quietHours.enabled` | `false` | 启用免打扰。 |
 | `quietHours.start` / `end` | `22:00` / `08:00` | 本地时间，支持跨夜。 |
-| `quietHours.allowCritical` | `true` | 免打扰期间仍提醒错误 / 目标受阻。 |
+| `quietHours.allowCritical` | `true` | 免打扰期间仍提醒关键事件：错误、目标受阻，以及需要你处理的阻塞提示（输入/批准）。 |
 | `minDurationSec` | `0` | 成功完成且耗时达到该秒数才通知。 |
 | `cooldownSec` | `10` | 同类通知最小间隔；严重错误不受限。 |
 | `include.sessionTitle` | `true` | 显示会话名。 |
@@ -159,7 +159,7 @@ dsh plugin --profile desktop add /absolute/path/to/dsh-system-notify
 | `click.focusWindowTitle` | `DeepSeek Harness` | Ubuntu 用该标题匹配窗口。 |
 | `click.openFallback` | `true` | Ubuntu 找不到窗口时打开上面的链接。 |
 | `appName` | `DeepSeek Harness` | Linux 通知显示的应用名。 |
-| `windows.appId` | `DeepSeekHarness.Notify` | Windows Toast AppID，一般无需修改。 |
+| `windows.appId` | `com.deepseek.dsh` | Windows Toast AppID，一般无需修改。 |
 | `iconPath` | `""` | 自定义 PNG 图标；留空使用内置图标。 |
 | `agentTool` | `false` | 注册 `send_desktop_notification` 工具。 |
 
@@ -180,7 +180,7 @@ Toast 使用 `activationType="protocol"`、`launch="dsh://open"`，并带一个�
 2. 启动一个临时的 `dbus-monitor` 监听该通知的 `ActionInvoked`；
 3. 点击后先用 `xdotool` / `wmctrl` 按 `click.focusWindowTitle` 聚焦窗口，找不到再 `xdg-open <click.url>`。
 
-如果系统没有 `gdbus` 或 `dbus-monitor`，会退回 `notify-send`，通知不可点击。如果 Ubuntu 上 DSH 跑在浏览器里，请把 `click.focusWindowTitle` 设为浏览器窗口标题包含的文字（例如 `DeepSeek Harness`），或者把 `click.url` 改成 DSH 网页地址。
+如果系统没有 `gdbus`，会退回 `notify-send`；如果没有 `dbus-monitor`，`gdbus` 仍能发出通知但无法捕获点击，因此通知不可点击。如果 Ubuntu 上 DSH 跑在浏览器里，请把 `click.focusWindowTitle` 设为浏览器窗口标题包含的文字（例如 `DeepSeek Harness`），或者把 `click.url` 改成 DSH 网页地址。Wayland 下 `wmctrl`/`xdotool` 可能不可用，此时点击会回退为打开 `click.url`。
 
 ## 事件来源
 
@@ -198,10 +198,10 @@ Toast 使用 `activationType="protocol"`、`launch="dsh://open"`，并带一个�
 
 ## 隐私
 
-- 通知内容只存在于瞬时弹窗和进程内存；除配置文件外不落盘。
+- 通知内容只存在于进程内存（Windows 通过环境变量传给 PowerShell 助手）和系统弹窗中；插件自身除配置文件外不落盘，但 Windows 通知中心可能按系统设置保留已显示的通知。
 - 配置文件在支持 POSIX 权限的系统上以 `0600` 写入。
 - **隐私风格**会移除会话名、摘要、路径、会话 ID 和错误文本，只保留事件类型与音效。
-- 点击链接会校验协议：允许 `http(s)://` 和应用深链；拒绝 `file:`、`javascript:`、`data:` 等。
+- 点击链接使用白名单校验：只允许 `http:`、`https:`、`dsh:`；拒绝 `file:`、`javascript:`、`ms-msdt:` 等其他协议。
 - HTTP 路由仅同源可用，校验 `Origin`，请求体上限 256 KiB。
 
 ## 常见问题
@@ -211,8 +211,7 @@ Toast 使用 `activationType="protocol"`、`launch="dsh://open"`，并带一个�
 1. 检查 Windows **设置 → 系统 → 通知** 是否允许“DeepSeek Harness”。
 2. 检查专注助手 / 勿扰模式；某些模式下通知只进通知中心，不显示横幅。
 3. 确认插件与对应事件已启用。
-4. 默认 AppID 为 `DeepSeekHarness.Notify`，由 DSH 桌面版创建；如缺失可改为 `com.deepseek.dsh`，或 PowerShell 的 AppID
-   `{1AC14E77-02E7-4E5D-B744-2EB1AE5198B7}\WindowsPowerShell\v1.0\powershell.exe`。
+4. 默认 AppID 为 `com.deepseek.dsh`，由 DSH 桌面版 Start Menu 快捷方式注册；助手会回退到其他已注册 Toast 源，最后回退到始终注册的 Windows PowerShell Toast 源。需要时可在设置中显式指定 `windows.appId`。
 
 ### Windows 没有声音
 

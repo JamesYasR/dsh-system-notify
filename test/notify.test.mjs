@@ -1,11 +1,14 @@
 import assert from 'node:assert/strict'
 import { EventEmitter } from 'node:events'
+import fs from 'node:fs'
+import os from 'node:os'
 import path from 'node:path'
 import { fileURLToPath } from 'node:url'
 import test from 'node:test'
 
 import { normalizeConfig } from '../lib/config.mjs'
 import { renderNotification } from '../lib/format.mjs'
+import { resolveIconPath } from '../lib/platform.mjs'
 import {
   buildLinuxNotification,
   buildLinuxSoundCommand,
@@ -105,19 +108,23 @@ test('Windows payload maps sound, icon, duration and click activation', () => {
   const { config, rendered } = fixture()
   const payload = buildWindowsPayload(rendered, config, winCapabilities(), { pkgDir })
   assert.equal(payload.toast, true)
-  assert.equal(payload.silent, false)
-  assert.ok(String(payload.audio).endsWith('alert.wav'))
+  assert.equal(payload.silent, true)
+  assert.equal(payload.audio, null)
+  assert.ok(String(payload.playFile).endsWith('alert.wav'))
   assert.equal(payload.duration, 'long')
   assert.equal(payload.clickEnabled, true)
   assert.equal(payload.clickUrl, 'dsh://open')
   assert.ok(payload.iconUri.startsWith('file:///'))
   assert.equal(payload.lines.length, 3)
+  assert.equal(payload.appId, 'com.deepseek.dsh')
 
   const systemError = fixture({ sound: { error: 'system' } })
   const systemPayload = buildWindowsPayload(systemError.rendered, systemError.config, winCapabilities(), {
     pkgDir
   })
+  assert.equal(systemPayload.silent, false)
   assert.equal(systemPayload.audio, 'ms-winsoundevent:Notification.Reminder')
+  assert.equal(systemPayload.playFile, null)
 })
 
 test('Windows payload can be silent, toast-only or sound-only', () => {
@@ -125,17 +132,20 @@ test('Windows payload can be silent, toast-only or sound-only', () => {
   const silent = buildWindowsPayload(normal.rendered, normal.config, winCapabilities(), { pkgDir })
   assert.equal(silent.silent, true)
   assert.equal(silent.audio, null)
+  assert.equal(silent.playFile, null)
 
   const toastOnly = fixture({ delivery: 'toast', sound: { normal: 'chime', error: 'chime' } })
   const toastPayload = buildWindowsPayload(toastOnly.rendered, toastOnly.config, winCapabilities(), { pkgDir })
   assert.equal(toastPayload.toast, true)
   assert.equal(toastPayload.silent, true)
   assert.equal(toastPayload.audio, null)
+  assert.equal(toastPayload.playFile, null)
 
   const bothChime = fixture({ sound: { normal: 'chime', error: 'chime' } })
   const chimePayload = buildWindowsPayload(bothChime.rendered, bothChime.config, winCapabilities(), { pkgDir })
-  assert.ok(String(chimePayload.audio).startsWith('file:///'))
-  assert.ok(String(chimePayload.audio).endsWith('chime.wav'))
+  assert.equal(chimePayload.silent, true)
+  assert.equal(chimePayload.audio, null)
+  assert.ok(String(chimePayload.playFile).endsWith('chime.wav'))
 
   const soundOnly = fixture({ delivery: 'sound' })
   const soundPayload = buildWindowsPayload(soundOnly.rendered, soundOnly.config, winCapabilities(), { pkgDir })
@@ -162,6 +172,27 @@ test('click can be disabled in the payload', () => {
   const payload = buildWindowsPayload(rendered, config, winCapabilities(), { pkgDir })
   assert.equal(payload.clickEnabled, false)
   assert.equal(payload.clickUrl, '')
+})
+
+test('toast AppID defaults to the DSH AUMID and accepts a custom value', () => {
+  const { config, rendered } = fixture()
+  const payload = buildWindowsPayload(rendered, config, winCapabilities(), { pkgDir })
+  assert.equal(payload.appId, 'com.deepseek.dsh')
+  const custom = fixture({ windows: { appId: 'My.Custom.Toast' } })
+  const customPayload = buildWindowsPayload(custom.rendered, custom.config, winCapabilities(), { pkgDir })
+  assert.equal(customPayload.appId, 'My.Custom.Toast')
+})
+
+test('invalid custom icons fall back to the bundled PNG', () => {
+  const directory = fs.mkdtempSync(path.join(os.tmpdir(), 'dsh-notify-icon-'))
+  const bogus = path.join(directory, 'icon.txt')
+  try {
+    fs.writeFileSync(bogus, 'not an image', 'utf8')
+    assert.equal(resolveIconPath(pkgDir, bogus), path.join(pkgDir, 'icon.png'))
+    assert.equal(resolveIconPath(pkgDir, path.join(directory, 'missing.png')), path.join(pkgDir, 'icon.png'))
+  } finally {
+    fs.rmSync(directory, { recursive: true, force: true })
+  }
 })
 
 test('Linux gdbus command carries actions when click is enabled', () => {
@@ -223,11 +254,11 @@ test('dry-run does not spawn and returns the built payload', async () => {
   notifier.dispose()
 })
 
-test('Windows send waits for the PowerShell helper', async () => {
+test('Windows send waits for the PowerShell helper and passes payload through env', async () => {
   const { config, rendered } = fixture()
   const calls = []
-  const spawnImpl = (command, args) => {
-    calls.push({ command, args })
+  const spawnImpl = (command, args, options) => {
+    calls.push({ command, args, options })
     const child = new EventEmitter()
     child.stdout = new EventEmitter()
     child.stderr = new EventEmitter()
@@ -245,7 +276,41 @@ test('Windows send waits for the PowerShell helper', async () => {
   assert.equal(result.ok, true)
   assert.equal(calls.length, 1)
   assert.ok(calls[0].args.some((arg) => arg.endsWith('win-toast.ps1')))
-  assert.ok(calls[0].args.includes('-PayloadFile'))
+  assert.equal(calls[0].args.includes('-PayloadFile'), false)
+  const payload = JSON.parse(calls[0].options.env.DSH_NOTIFY_PAYLOAD)
+  assert.equal(payload.title.length > 0, true)
+  assert.equal(payload.appId, 'com.deepseek.dsh')
+  assert.ok(payload.playFile.endsWith('alert.wav'))
+  notifier.dispose()
+})
+
+test('Linux sound-only delivery skips the notification and plays the sound', async () => {
+  const { config, rendered } = fixture({
+    delivery: 'sound',
+    sound: { normal: 'chime', error: 'chime' }
+  })
+  const calls = []
+  const spawnImpl = (command, args) => {
+    calls.push({ command, args })
+    const child = new EventEmitter()
+    child.stdout = new EventEmitter()
+    child.stderr = new EventEmitter()
+    setImmediate(() => child.emit('close', 0))
+    return child
+  }
+  const notifier = createNotifier({
+    platform: 'linux',
+    capabilities: linuxCapabilities(),
+    pkgDir,
+    env: {},
+    spawnImpl,
+    logger: () => {}
+  })
+  const result = await notifier.send(rendered, config, { wait: false })
+  assert.equal(result.ok, true)
+  assert.equal(result.backend, 'linux-sound')
+  assert.equal(calls.some((call) => call.command === '/usr/bin/gdbus'), false)
+  assert.ok(calls.some((call) => call.command === '/usr/bin/paplay'))
   notifier.dispose()
 })
 

@@ -20,6 +20,16 @@ const event = {
   summary: '  Done.   Settings page now saves and plays a test sound.  '
 }
 
+test('detailed style respects include.sessionTitle=false', () => {
+  const rendered = renderNotification(
+    event,
+    withConfig({ style: 'detailed', language: 'en', include: { sessionTitle: false, sessionId: false } })
+  )
+  assert.equal(rendered.title, 'Task completed')
+  assert.equal(rendered.lines.some((line) => line.includes('Refactor')), false)
+  assert.ok(rendered.lines.includes('/home/me/projects/demo'))
+})
+
 test('privacy style carries no body content', () => {
   const rendered = renderNotification(event, withConfig({ style: 'privacy', language: 'en' }))
   assert.equal(rendered.title, 'Task completed')

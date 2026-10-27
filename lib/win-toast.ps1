@@ -1,11 +1,8 @@
-param(
-  [Parameter(Mandatory = $true)][string]$PayloadFile
-)
-
 # dsh-system-notify Windows delivery helper.
-# Receives one JSON payload from Node (never user-controlled shell text), shows
-# a WinRT toast, and optionally plays a WAV or a system sound. Exit code 0 means
-# the toast and/or sound was dispatched; 1 carries the PowerShell error text.
+# Reads one JSON payload from the DSH_NOTIFY_PAYLOAD environment variable (never
+# user-controlled shell text), shows a WinRT toast, and optionally plays a WAV or
+# a system sound. Exit code 0 means the toast and/or sound was dispatched; 1
+# carries the PowerShell error text.
 
 $ErrorActionPreference = 'Stop'
 
@@ -13,9 +10,13 @@ function Escape-Xml([string]$value) {
   return [System.Security.SecurityElement]::Escape($value)
 }
 
+if (-not $env:DSH_NOTIFY_PAYLOAD) {
+  [Console]::Error.WriteLine('payload: DSH_NOTIFY_PAYLOAD is empty')
+  exit 1
+}
+
 try {
-  $json = Get-Content -LiteralPath $PayloadFile -Raw -Encoding UTF8
-  $payload = $json | ConvertFrom-Json
+  $payload = $env:DSH_NOTIFY_PAYLOAD | ConvertFrom-Json
 } catch {
   [Console]::Error.WriteLine('payload: ' + $_.Exception.Message)
   exit 1
@@ -68,12 +69,12 @@ if ($payload.toast) {
 
     $appId = [string]$payload.appId
     if (-not $appId) {
-      $appId = '{1AC14E77-02E7-4E5D-B744-2EB1AE5198B7}\WindowsPowerShell\v1.0\powershell.exe'
+      $appId = 'com.deepseek.dsh'
     }
     $fallbackId = '{1AC14E77-02E7-4E5D-B744-2EB1AE5198B7}\WindowsPowerShell\v1.0\powershell.exe'
     $shown = $false
     $lastError = $null
-    foreach ($id in @($appId, $fallbackId)) {
+    foreach ($id in @($appId, 'com.deepseek.dsh', 'DeepSeekHarness.Notify', $fallbackId)) {
       if (-not $id) { continue }
       try {
         $notifier = [Windows.UI.Notifications.ToastNotificationManager]::CreateToastNotifier($id)

@@ -12,9 +12,11 @@ local notification helpers:
 
 ## Data handling
 
-- Notification text exists only in process memory and the transient OS toast.
-- The only persisted file is the JSON config, written with user-only permissions
-  where the OS supports it (`0600`).
+- Notification content stays in process memory (the Windows payload is passed to
+  the PowerShell helper through an environment variable) and in the OS toast.
+  The plugin itself persists only the JSON config, written with user-only
+  permissions where the OS supports it (`0600`). Windows Notification Center may
+  retain shown toasts according to OS settings.
 - No network requests are made by the plugin.
 - Click URLs are validated; `file:`, `javascript:`, `data:` and similar schemes
   are rejected.

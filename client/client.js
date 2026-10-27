@@ -23,6 +23,7 @@ window.__ModuleLoader__.load({ id: "dsh-system-notify", factory: (require) => {
     testToast: "发送测试通知",
     testSound: "试听音效",
     reset: "恢复默认",
+    reload: "重新加载",
     resetDone: "已填入默认值，点击“保存”后生效。",
     saveFailed: "保存失败",
     testFailed: "测试失败",
@@ -47,7 +48,7 @@ window.__ModuleLoader__.load({ id: "dsh-system-notify", factory: (require) => {
     quietEnabled: "启用免打扰",
     quietStart: "开始",
     quietEnd: "结束",
-    allowCritical: "错误等严重事件仍然提醒",
+    allowCritical: "错误、目标受阻及需要处理的阻塞提示仍然提醒",
     filters: "频率限制",
     minDuration: "最短任务时长（秒）",
     minDurationHint: "仅对“任务完成”生效；0 表示不限制。",
@@ -64,7 +65,7 @@ window.__ModuleLoader__.load({ id: "dsh-system-notify", factory: (require) => {
     click: "点击通知",
     clickEnabled: "点击通知时唤起 DSH 窗口",
     clickUrl: "点击打开的链接",
-    clickUrlHint: "默认使用 DSH 桌面版的 dsh://open 深链。网页版可改为 DSH 的 http 地址。",
+    clickUrlHint: "支持 dsh:// 或 http(s)://。默认使用 DSH 桌面版的 dsh://open 深链；网页版可改为 DSH 的 http 地址。",
     clickTitle: "Ubuntu 窗口标题匹配",
     clickTitleHint: "Ubuntu 上先尝试用 wmctrl/xdotool 按该标题聚焦窗口，找不到再打开上面的链接。",
     clickFallback: "找不到窗口时改为打开链接",
@@ -75,7 +76,7 @@ window.__ModuleLoader__.load({ id: "dsh-system-notify", factory: (require) => {
     languageAuto: "跟随系统",
     appName: "通知应用名（Linux）",
     appId: "Windows Toast AppID",
-    appIdHint: "默认 DeepSeekHarness.Notify，由 DSH 桌面版注册；一般无需修改。",
+    appIdHint: "默认 com.deepseek.dsh（DSH 桌面版快捷方式注册）。不存在时会自动回退到其他已注册 Toast 源，一般无需修改。",
     iconPath: "自定义通知图标（PNG）",
     iconPathHint: "留空使用插件自带图标。",
     configPath: "配置文件",
@@ -143,6 +144,7 @@ window.__ModuleLoader__.load({ id: "dsh-system-notify", factory: (require) => {
     testToast: "Send test notification",
     testSound: "Preview sound",
     reset: "Restore defaults",
+    reload: "Reload",
     resetDone: "Defaults loaded. Click Save to apply.",
     saveFailed: "Save failed",
     testFailed: "Test failed",
@@ -167,7 +169,7 @@ window.__ModuleLoader__.load({ id: "dsh-system-notify", factory: (require) => {
     quietEnabled: "Enable quiet hours",
     quietStart: "Start",
     quietEnd: "End",
-    allowCritical: "Still notify for critical errors",
+    allowCritical: "Still notify for errors, blocked goals and blocking prompts",
     filters: "Rate limits",
     minDuration: "Minimum task duration (sec)",
     minDurationHint: "Applies to successful completion only; 0 disables the limit.",
@@ -184,7 +186,7 @@ window.__ModuleLoader__.load({ id: "dsh-system-notify", factory: (require) => {
     click: "Click action",
     clickEnabled: "Focus the DSH window when the notification is clicked",
     clickUrl: "Link to open on click",
-    clickUrlHint: "Defaults to the DSH desktop dsh://open deep link. For the web version use the DSH http URL.",
+    clickUrlHint: "Supports dsh:// or http(s)://. Defaults to the DSH desktop dsh://open deep link; for the web version use the DSH http URL.",
     clickTitle: "Ubuntu window title match",
     clickTitleHint: "On Ubuntu, try focusing a window with this title through wmctrl/xdotool before opening the link.",
     clickFallback: "Open the link when no window is found",
@@ -195,7 +197,7 @@ window.__ModuleLoader__.load({ id: "dsh-system-notify", factory: (require) => {
     languageAuto: "Follow system",
     appName: "Notification app name (Linux)",
     appId: "Windows Toast AppID",
-    appIdHint: "Defaults to DeepSeekHarness.Notify, registered by DSH Desktop. Usually leave unchanged.",
+    appIdHint: "Defaults to com.deepseek.dsh (registered by the DSH Desktop shortcut). Missing IDs fall back to other registered toast sources; usually leave unchanged.",
     iconPath: "Custom notification icon (PNG)",
     iconPathHint: "Empty uses the plugin's bundled icon.",
     configPath: "Config file",
@@ -539,14 +541,23 @@ window.__ModuleLoader__.load({ id: "dsh-system-notify", factory: (require) => {
         }))),
 
       h(Section, { title: tr("style"), hint: tr("styleHint") },
-        h("div", { style: S.styleGrid }, ["privacy", "simple", "standard", "detailed"].map(function (style) {
+        h("div", { style: S.styleGrid, role: "radiogroup" }, ["privacy", "simple", "standard", "detailed"].map(function (style) {
           var labels = styleLabel(style);
           var sample = styleSamples[style];
           var active = form.style === style;
           return h("div", {
             key: style,
+            role: "radio",
+            tabIndex: 0,
+            "aria-checked": active,
             style: Object.assign({}, S.styleCard, active ? S.styleCardActive : {}),
-            onClick: function () { update("style", style); }
+            onClick: function () { update("style", style); },
+            onKeyDown: function (event) {
+              if (event.key === "Enter" || event.key === " ") {
+                event.preventDefault();
+                update("style", style);
+              }
+            }
           },
             h("div", { style: S.styleName }, labels[0]),
             h("div", { style: S.styleDesc }, labels[1]),
@@ -657,6 +668,7 @@ window.__ModuleLoader__.load({ id: "dsh-system-notify", factory: (require) => {
       h("div", { style: S.actions },
         h("button", { style: S.btn, disabled: busy, onClick: save }, tr("save")),
         h("button", { style: Object.assign({}, S.btn, S.btnGhost), disabled: busy, onClick: function () { test("notification"); } }, tr("testToast")),
+        h("button", { style: Object.assign({}, S.btn, S.btnGhost), disabled: busy, onClick: load }, tr("reload")),
         h("button", { style: Object.assign({}, S.btn, S.btnGhost), disabled: busy, onClick: reset }, tr("reset"))),
 
       h("div", { style: S.status }, status),

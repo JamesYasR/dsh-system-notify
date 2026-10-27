@@ -21,6 +21,7 @@ test('defaults are complete and valid', () => {
   assert.equal(config.sound.volume, 80)
   assert.equal(config.click.enabled, true)
   assert.equal(config.click.url, 'dsh://open')
+  assert.equal(config.windows.appId, 'com.deepseek.dsh')
   assert.equal(Object.keys(config.events).length, 11)
   assert.deepEqual(Object.keys(config.include).sort(), [
     'duration',
@@ -61,10 +62,12 @@ test('normalisation drops unknown keys and clamps numbers', () => {
   assert.equal(config.events.bogus, undefined)
 })
 
-test('custom click URLs must have a scheme and host', () => {
+test('custom click URLs must use an allowed scheme', () => {
   assert.equal(normalizeConfig({ click: { url: 'https://127.0.0.1:51625/' } }).click.url, 'https://127.0.0.1:51625/')
   assert.equal(normalizeConfig({ click: { url: 'dsh://open' } }).click.url, 'dsh://open')
   assert.equal(normalizeConfig({ click: { url: 'javascript:alert(1)//' } }).click.url, DEFAULT_CONFIG.click.url)
+  assert.equal(normalizeConfig({ click: { url: 'ms-msdt://whatever' } }).click.url, DEFAULT_CONFIG.click.url)
+  assert.equal(normalizeConfig({ click: { url: 'file:///etc/passwd' } }).click.url, DEFAULT_CONFIG.click.url)
   assert.equal(normalizeConfig({ click: { url: 'not a url' } }).click.url, DEFAULT_CONFIG.click.url)
 })
 

@@ -12,7 +12,7 @@ Initial public release.
   - goal completed / blocked;
   - subagent and workflow completion (optional).
 - Windows backend: PowerShell + WinRT Toast, DSH Desktop AUMID
-  `DeepSeekHarness.Notify`, click-to-focus through the `dsh://open` deep link.
+  `com.deepseek.dsh`, click-to-focus through the `dsh://open` deep link.
 - Ubuntu backend: `gdbus`/`notify-send` notifications, `paplay`/`pw-play`/`aplay`
   sounds, clickable notifications through `ActionInvoked` + `wmctrl`/`xdotool`.
 - macOS best-effort backend: `osascript` + `afplay`, click support via
@@ -24,4 +24,4 @@ Initial public release.
 - Bilingual settings page (Chinese/English) under Settings → System
   Notifications, backed by same-origin host routes.
 - Bundled original chime/alert WAV files and SVG/PNG artwork.
-- 39 unit tests plus cross-platform CI (Ubuntu + Windows, Node 20/22).
+- 47 unit tests plus cross-platform CI (Ubuntu + Windows, Node 20/22).

@@ -199,6 +199,38 @@ test('quiet hours suppress normal events but keep critical errors', () => {
   assert.equal(sent[0].kind, 'turnError')
 })
 
+test('approval requests resolve the session through the sessions service', () => {
+  const sent = []
+  const { collector } = makeCollector(makeConfig(), sent, {
+    titleService: () => makeTitleService('Recovered session'),
+    getSessionById: (id) => (id === 's1' ? session : undefined)
+  })
+  collector.handleApproval({
+    agent: { id: 's1' },
+    toolName: 'bash',
+    displayReason: { en: 'Delete the build directory', zh: '删除构建目录' }
+  })
+  assert.equal(sent[0].kind, 'approvalRequest')
+  assert.equal(sent[0].sessionTitle, 'Recovered session')
+  assert.equal(sent[0].approval.toolName, 'bash')
+})
+
+test('blocking prompts still notify during quiet hours when allowed', () => {
+  const sent = []
+  const night = new Date(2026, 0, 1, 23, 0, 0).getTime()
+  const { collector } = makeCollector(
+    makeConfig({ quietHours: { enabled: true, start: '22:00', end: '08:00', allowCritical: true } }),
+    sent,
+    { clock: () => night }
+  )
+  collector.handleNeedsInput({
+    questions: [{ id: 'q1', question: 'Pick a colour' }],
+    agent: { id: 's1', session }
+  })
+  assert.equal(sent.length, 1)
+  assert.equal(sent[0].kind, 'needsInput')
+})
+
 test('a pending question suppresses the duplicate blocked notification', () => {
   const sent = []
   const { collector } = makeCollector(makeConfig(), sent)
